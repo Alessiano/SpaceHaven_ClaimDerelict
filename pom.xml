@@ -4,7 +4,7 @@
     <modelVersion>4.0.0</modelVersion>
     <groupId>com.cyanblob</groupId>
     <artifactId>claimderelict</artifactId>
-    <version>0.0.1</version>
+    <version>0.0.2</version>
 
     <properties>
         <maven.compiler.source>1.8</maven.compiler.source>
@@ -23,6 +23,8 @@
             <groupId>fi.bugbyte</groupId>
             <artifactId>spacehaven</artifactId>
             <version>1.0.0</version>
+            <scope>system</scope>
+            <systemPath>${project.basedir}/spacehaven.jar</systemPath>
         </dependency>
 
         <dependency>

@@ -7,7 +7,6 @@ import fi.bugbyte.framework.screen.StageButton;
 import fi.bugbyte.framework.screen.StageButton.clickHandler;
 import fi.bugbyte.gen.compiled.TextButtons2;
 import fi.bugbyte.gen.compiled.TextIconButton1;
-import fi.bugbyte.spacehaven.gui.Indicators;
 import fi.bugbyte.spacehaven.gui.GUI.SelectedElements;
 import fi.bugbyte.spacehaven.gui.GameLog;
 import fi.bugbyte.spacehaven.stuff.FactionUtils.FactionSide;
@@ -30,48 +29,44 @@ public class claimDerelictAspect {
     private static ScalableIconTextButton purchaseButton;
     private World world = null;
 
-    @Pointcut("call(void fi.bugbyte.spacehaven.gui.GUI.SelectedElements.addExploredDerelictShipStuff()) && within(fi.bugbyte..*)")
+    @Pointcut("call(* fi.bugbyte.spacehaven.gui.GUI.SelectedElements.addExploredDerelictShipStuff(..)) && within(fi.bugbyte..*)")
     public void addShipStuff() {
     }
 
     @After("addShipStuff()")
     public void updateGui(JoinPoint joinPoint) throws Throwable {
         SelectedElements _this = (SelectedElements) joinPoint.getThis();
+        Object[] args = joinPoint.getArgs(); 
 
-        Field privateUriField = _this.getClass().getDeclaredField("selectedShip");
-        privateUriField.setAccessible(true);
-        Ship ship = (Ship) privateUriField.get(_this);
+        if (args == null || args.length < 2) return; 
+        Ship ship = (Ship) args[0];
+        Object target = args[1]; 
 
         if (world == null) {
             world = ship.getWorld();
         }
 
-        Method addSelectionButton = _this.getClass().getDeclaredMethod("addSelectionButton", StageButton.class);
-        addSelectionButton.setAccessible(true);
         Method createClaimButton = _this.getClass().getDeclaredMethod("createClaimButton");
         createClaimButton.setAccessible(true);
+
+        Method targetAddSelectionButton = target.getClass().getDeclaredMethod("addSelectionButton", StageButton.class);
+        targetAddSelectionButton.setAccessible(true);
 
         if (ship.isDerelict() && !ship.isUnexplored() && !ship.isPlayerShip()) {
             try {
                 createClaimButton.invoke(_this);
 
-                privateUriField = _this.getClass().getDeclaredField("claimShipButton");
-                privateUriField.setAccessible(true);
-                ScalableIconTextButton claimShipButton = (ScalableIconTextButton) privateUriField.get(_this);
-
                 int price = 1000;
                 purchaseButton = (ScalableIconTextButton) getPurchaseButton(price);
+                purchaseButton.setClickHandler(claimDerelictClickHandler(ship, price, world, _this));
 
-                clickHandler originalClickHandler = claimShipButton.getClickHandler();
-                purchaseButton.setClickHandler(claimDerelictClickHandler(ship, originalClickHandler, price, world));
-
-                addSelectionButton.invoke(_this, (StageButton) purchaseButton);
+                targetAddSelectionButton.invoke(target, (StageButton) purchaseButton);
 
             } catch (Exception e) {
-                System.out.println(e);
+                System.out.println("ClaimDerelict Mod Fehler in updateGui: " + e.getMessage());
             }
         }
-    };
+    }
 
     TextIconButton1 getPurchaseButton(int price) {
         boolean bool = CompiledClassLoader.canCallOnGet;
@@ -88,64 +83,81 @@ public class claimDerelictAspect {
         return purchaseButton;
     }
 
-    clickHandler claimDerelictClickHandler(Ship ship, clickHandler onClick, int price, World world)
-            throws NoSuchFieldException, SecurityException, IllegalArgumentException, IllegalAccessException {
-
+    clickHandler claimDerelictClickHandler(Ship ship, int price, World world, SelectedElements _this) {
         return new clickHandler() {
             public void clicked() {
-                Field privateUriField;
-                Indicators.Bank playerBank = null;
-
                 try {
-                    privateUriField = world.getClass().getDeclaredField("playerBank");
-                    privateUriField.setAccessible(true);
-                    playerBank = (Indicators.Bank) privateUriField.get(world);
+                    Field playerBankField = world.getClass().getDeclaredField("playerBank");
+                    playerBankField.setAccessible(true);
+                    Object playerBank = playerBankField.get(world);
 
-                } catch (NoSuchFieldException e) {
-                    e.printStackTrace();
-                } catch (SecurityException e) {
-                    e.printStackTrace();
-                } catch (IllegalArgumentException e) {
-                    e.printStackTrace();
-                } catch (IllegalAccessException e) {
-                    e.printStackTrace();
-                }
+                    if (playerBank == null) return;
 
-                try {
+                    Method getCreditsMethod = playerBank.getClass().getMethod("getCreditsAvailable");
+                    int availableCredits = (Integer) getCreditsMethod.invoke(playerBank);
 
-                    if (playerBank == null || playerBank.getCreditsAvailable() < price) {
+                    if (availableCredits < price) {
                         GameLog.addLog("Can not afford to purchase derelict", GameLog.LogType.Failure, ship);
-                        return;
+                        return; 
                     }
 
-                    privateUriField = ship.getClass().getDeclaredField("shipSettings");
-                    privateUriField.setAccessible(true);
-                    ShipSettings shipsettings;
+                    // 1. Credits abziehen
+                    Method addCreditsMethod = playerBank.getClass().getMethod("addCredits", int.class);
+                    addCreditsMethod.invoke(playerBank, -price);
 
-                    try {
-                        // remove the "derelict" flag
-                        shipsettings = (ShipSettings) privateUriField.get(ship);
-                        shipsettings.state = ShipState.Normal;
+                    // 2. Das Schiff für das Vanilla-Claiming preparieren
+                    Field shipSettingsField = ship.getClass().getDeclaredField("shipSettings");
+                    shipSettingsField.setAccessible(true);
+                    ShipSettings shipsettings = (ShipSettings) shipSettingsField.get(ship);
+                    shipsettings.state = ShipState.Normal;
 
-                        // easy way to set `ship.claimable = true`
-                        ship.abandon(FactionSide.NotSet, false, true);
+                    Field claimableField = ship.getClass().getDeclaredField("claimable");
+                    claimableField.setAccessible(true);
+                    claimableField.setBoolean(ship, true);
 
-                        playerBank.addCredits(-price);
-
-                    } catch (IllegalArgumentException e) {
-                        e.printStackTrace();
-                    } catch (IllegalAccessException e) {
-                        e.printStackTrace();
+                    // 3. Vanilla Claim auslösen
+                    Method claimMethod = null;
+                    for (Method m : ship.getClass().getMethods()) {
+                        if (m.getName().equals("claim") && m.getParameterCount() == 2) {
+                            claimMethod = m;
+                            break;
+                        }
                     }
 
-                } catch (NoSuchFieldException e) {
-                    e.printStackTrace();
-                } catch (SecurityException e) {
+                    boolean success = false;
+                    if (claimMethod != null) {
+                        success = (Boolean) claimMethod.invoke(ship, FactionSide.Player, null);
+                    }
+
+                    if (success) {
+                        GameLog.addLog("Derelict purchased! Rebooting UI...", GameLog.LogType.Good, ship);
+                        
+                        // 4. DEINE IDEE: DER VIRTUELLE SAVEGAME RELOAD
+                        try {
+                            Field guiInstanceField = Class.forName("fi.bugbyte.spacehaven.gui.GUI").getField("instance");
+                            Object guiInstance = guiInstanceField.get(null);
+                            
+                            // Ruft exakt die Methode auf, die das Spiel beim Neuladen nutzt!
+                            Method gameLoadedMethod = guiInstance.getClass().getMethod("gameLoaded");
+                            gameLoadedMethod.invoke(guiInstance);
+                            
+                        } catch (Exception guiEx) {
+                            GameLog.addLog("System reboot failed: " + guiEx.getMessage(), GameLog.LogType.Failure, ship);
+                        }
+
+                    } else {
+                        // Sicherheitsnetz
+                        addCreditsMethod.invoke(playerBank, price);
+                        claimableField.setBoolean(ship, false); 
+                        shipsettings.state = ShipState.Derelict;
+                        GameLog.addLog("Error: Could not claim ship internally.", GameLog.LogType.Failure, ship);
+                    }
+
+                } catch (Exception e) {
+                    System.out.println("ClaimDerelict Mod Fehler im ClickHandler: " + e.getMessage());
                     e.printStackTrace();
                 }
-                onClick.clicked();
             }
         };
-
     }
 }
