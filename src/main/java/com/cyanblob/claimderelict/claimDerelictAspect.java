@@ -101,11 +101,9 @@ public class claimDerelictAspect {
                         return; 
                     }
 
-                    // 1. Credits abziehen
                     Method addCreditsMethod = playerBank.getClass().getMethod("addCredits", int.class);
                     addCreditsMethod.invoke(playerBank, -price);
 
-                    // 2. Das Schiff für das Vanilla-Claiming preparieren
                     Field shipSettingsField = ship.getClass().getDeclaredField("shipSettings");
                     shipSettingsField.setAccessible(true);
                     ShipSettings shipsettings = (ShipSettings) shipSettingsField.get(ship);
@@ -115,7 +113,6 @@ public class claimDerelictAspect {
                     claimableField.setAccessible(true);
                     claimableField.setBoolean(ship, true);
 
-                    // 3. Vanilla Claim auslösen
                     Method claimMethod = null;
                     for (Method m : ship.getClass().getMethods()) {
                         if (m.getName().equals("claim") && m.getParameterCount() == 2) {
@@ -132,12 +129,10 @@ public class claimDerelictAspect {
                     if (success) {
                         GameLog.addLog("Derelict purchased! Rebooting UI...", GameLog.LogType.Good, ship);
                         
-                        // 4. DEINE IDEE: DER VIRTUELLE SAVEGAME RELOAD
                         try {
                             Field guiInstanceField = Class.forName("fi.bugbyte.spacehaven.gui.GUI").getField("instance");
                             Object guiInstance = guiInstanceField.get(null);
                             
-                            // Ruft exakt die Methode auf, die das Spiel beim Neuladen nutzt!
                             Method gameLoadedMethod = guiInstance.getClass().getMethod("gameLoaded");
                             gameLoadedMethod.invoke(guiInstance);
                             
@@ -146,7 +141,6 @@ public class claimDerelictAspect {
                         }
 
                     } else {
-                        // Sicherheitsnetz
                         addCreditsMethod.invoke(playerBank, price);
                         claimableField.setBoolean(ship, false); 
                         shipsettings.state = ShipState.Derelict;
